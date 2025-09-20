@@ -1,6 +1,7 @@
 import argparse
 
-import mmcv
+from mmengine.config import Config
+from mmengine.fileio import load
 import numpy as np
 from mmcv.runner import obj_from_dict
 
@@ -30,13 +31,13 @@ def parse_args():
 def main():
     args = parse_args()
 
-    cfg = mmcv.Config.fromfile(args.config)
+    cfg = Config.fromfile(args.config)
 
     dataset = obj_from_dict(cfg.data.test, datasets, dict(test_mode=True))
 
     output_list = []
     for out in args.outputs:
-        output_list.append(mmcv.load(out))
+        output_list.append(load(out))
 
     if args.score_weights:
         weights = np.array(args.score_weights) / sum(args.score_weights)

@@ -1,11 +1,11 @@
 import copy
-from collections import Sequence
+from collections.abc import Sequence
 import torch
 import numpy as np
 import os
 import glob
 import fnmatch
-import mmcv
+from mmengine.utils import is_str
 from mmcv.runner import obj_from_dict
 from .. import datasets
 import csv
@@ -22,7 +22,7 @@ def to_tensor(data):
         return data
     elif isinstance(data, np.ndarray):
         return torch.from_numpy(data)
-    elif isinstance(data, Sequence) and not mmcv.is_str(data):
+    elif isinstance(data, Sequence) and not is_str(data):
         return torch.tensor(data)
     elif isinstance(data, int):
         return torch.LongTensor([data])

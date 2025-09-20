@@ -1,7 +1,8 @@
 import os
 import os.path as osp
 import logging
-import mmcv
+from mmengine.fileio import load, dump
+from mmengine.utils import ProgressBar
 import time
 import torch
 import numpy as np
@@ -47,7 +48,7 @@ class DistEvalHook(Hook):
         runner.model.eval()
         results = [None for _ in range(len(self.dataset))]
         if runner.rank == 0:
-            prog_bar = mmcv.ProgressBar(len(self.dataset))
+            prog_bar = ProgressBar(len(self.dataset))
         for idx in range(runner.rank, len(self.dataset), runner.world_size):
             data = self.dataset[idx]
             data_gpu = scatter(
@@ -70,7 +71,7 @@ class DistEvalHook(Hook):
             dist.barrier()
             for i in range(1, runner.world_size):
                 tmp_file = osp.join(runner.work_dir, 'temp_{}.pkl'.format(i))
-                tmp_results = mmcv.load(tmp_file)
+                tmp_results = load(tmp_file)
                 for idx in range(i, len(results), runner.world_size):
                     results[idx] = tmp_results[idx]
                 os.remove(tmp_file)
@@ -78,7 +79,7 @@ class DistEvalHook(Hook):
         else:
             tmp_file = osp.join(runner.work_dir,
                                 'temp_{}.pkl'.format(runner.rank))
-            mmcv.dump(results, tmp_file)
+            dump(results, tmp_file)
             dist.barrier()
         dist.barrier()
 

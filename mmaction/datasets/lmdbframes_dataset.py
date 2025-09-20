@@ -1,4 +1,5 @@
 import mmcv
+from mmengine.fileio import load as file_load
 import numpy as np
 import os.path as osp
 from mmcv.parallel import DataContainer as DC
@@ -139,7 +140,7 @@ class LMDBFramesDataset(Dataset):
         # return mmcv.load(ann_file)
 
     def load_proposals(self, proposal_file):
-        return mmcv.load(proposal_file)
+        return file_load(proposal_file)
 
     def get_ann_info(self, idx):
         return {'path': self.video_infos[idx].path,

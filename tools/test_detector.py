@@ -5,7 +5,9 @@ import tempfile
 
 import torch
 import torch.distributed as dist
-import mmcv
+from mmengine.config import Config
+from mmengine.fileio import load, dump
+from mmengine.utils import mkdir_or_exist, ProgressBar
 from mmcv.runner import load_checkpoint, obj_from_dict
 from mmcv.runner import get_dist_info
 from mmcv.parallel.distributed import MMDistributedDataParallel
@@ -13,7 +15,7 @@ from mmcv.parallel.distributed import MMDistributedDataParallel
 from mmaction import datasets
 from mmaction.apis import init_dist
 from mmaction.datasets import build_dataloader
-from mmaction.models import build_detector, detectors
+from mmaction.models.builder import build_detector
 from mmaction.core.evaluation.ava_utils import results2csv, ava_eval
 
 import os.path as osp
@@ -71,10 +73,10 @@ def collect_results(result_part, size, tmpdir=None):
         tmpdir = dir_tensor.cpu().numpy().tobytes().decode().rstrip()
     else:
         tmpdir = osp.join(tmpdir, args.out.split('.')[0])
-        mmcv.mkdir_or_exist(tmpdir)
+        mkdir_or_exist(tmpdir)
 
     print('rank {} begin dump'.format(rank), flush=True)
-    mmcv.dump(result_part, osp.join(tmpdir, 'part_{}.pkl'.format(rank)))
+    dump(result_part, osp.join(tmpdir, 'part_{}.pkl'.format(rank)))
     print('rank {} finished dump'.format(rank), flush=True)
     dist.barrier()
     if rank != 0:
@@ -83,7 +85,7 @@ def collect_results(result_part, size, tmpdir=None):
         part_list = []
         for i in range(world_size):
             part_file = osp.join(tmpdir, 'part_{}.pkl'.format(i))
-            part_list.append(mmcv.load(part_file))
+            part_list.append(load(part_file))
         ordered_results = []
         for res in zip(*part_list):
             ordered_results.extend(list(res))
@@ -95,7 +97,7 @@ def single_test(model, data_loader):
     model.eval()
     results = []
     dataset = data_loader.dataset
-    prog_bar = mmcv.ProgressBar(len(dataset))
+    prog_bar = ProgressBar(len(dataset))
     for data in data_loader:
         with torch.no_grad():
             result = model(return_loss=False, **data)
@@ -139,7 +141,7 @@ def main():
     global args
     args = parse_args()
 
-    cfg = mmcv.Config.fromfile(args.config)
+    cfg = Config.fromfile(args.config)
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
         torch.backends.cudnn.benchmark = True
@@ -150,7 +152,7 @@ def main():
         raise ValueError('The output file must be a pkl file.')
 
     if osp.exists(args.out):
-        outputs = mmcv.load(args.out)
+        outputs = load(args.out)
     else:   
         if args.launcher == 'none':
           raise NotImplementedError("By default, we use distributed testing, so that launcher should be pytorch")
@@ -181,7 +183,7 @@ def main():
         rank, _ = get_dist_info()
         if rank == 0:
             print('writing results to {}'.format(args.out))
-            mmcv.dump(outputs, args.out)
+            dump(outputs, args.out)
 
     eval_type = args.eval
     if eval_type:

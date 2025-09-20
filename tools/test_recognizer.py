@@ -3,7 +3,9 @@ import argparse
 import torch
 import time
 import torch.distributed as dist
-import mmcv
+from mmengine.config import Config
+from mmengine.fileio import load, dump
+from mmengine.utils import mkdir_or_exist
 import os.path as osp
 import tempfile
 from mmcv.runner import load_checkpoint, obj_from_dict
@@ -13,7 +15,7 @@ from mmcv.parallel.distributed import MMDistributedDataParallel
 from mmaction import datasets
 from mmaction.apis import init_dist
 from mmaction.datasets import build_dataloader
-from mmaction.models import build_recognizer
+from mmaction.models.builder import build_recognizer
 from mmaction.core.evaluation.accuracy import (softmax, top_k_accuracy,
                                                mean_class_accuracy)
 import warnings
@@ -70,11 +72,11 @@ def collect_results(result_part, size, tmpdir=None):
         tmpdir = dir_tensor.cpu().numpy().tobytes().decode().rstrip()
     else:
         tmpdir = osp.join(tmpdir, args.out.split('.')[0])
-        mmcv.mkdir_or_exist(tmpdir)
+        mkdir_or_exist(tmpdir)
     # dump the part result to the dir
 
     print('rank {} begin dump'.format(rank), flush=True)
-    mmcv.dump(result_part, osp.join(tmpdir, 'part_{}.pkl'.format(rank)))
+    dump(result_part, osp.join(tmpdir, 'part_{}.pkl'.format(rank)))
     print('rank {} finished dump'.format(rank), flush=True)
     dist.barrier()
     if rank != 0:
@@ -83,7 +85,7 @@ def collect_results(result_part, size, tmpdir=None):
         part_list = []
         for i in range(world_size):
             part_file = osp.join(tmpdir, 'part_{}.pkl'.format(i))
-            part_list.append(mmcv.load(part_file))
+            part_list.append(load(part_file))
         ordered_results = []
         for res in zip(*part_list):
             ordered_results.extend(list(res))
@@ -118,7 +120,7 @@ def main():
     if args.out is not None and not args.out.endswith(('.pkl', '.pickle')):
         raise ValueError('The output file must be a pkl file.')
 
-    cfg = mmcv.Config.fromfile(args.config)
+    cfg = Config.fromfile(args.config)
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
         torch.backends.cudnn.benchmark = True
@@ -163,7 +165,7 @@ def main():
     rank, _ = get_dist_info()
     if args.out and rank == 0:
         print('writing results to {}'.format(args.out))
-        mmcv.dump(outputs, args.out)
+        dump(outputs, args.out)
 
         gt_labels = []
         for i in range(len(dataset)):

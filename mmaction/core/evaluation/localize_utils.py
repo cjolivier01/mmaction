@@ -2,7 +2,7 @@ import numpy as np
 from .accuracy import softmax
 import pandas as pd
 from multiprocessing import Pool
-import mmcv
+from mmengine.fileio import load as file_load
 
 try:
     import sys
@@ -63,7 +63,7 @@ def results2det(dataset, outputs,
                     detections[cls][video_id] = np.vstack(
                         [detections[cls][video_id], new_item])
         else:
-            cls_score_dict = mmcv.load(cls_score_dict)
+            cls_score_dict = file_load(cls_score_dict)
             if softmax_before_filter:
                 combined_scores = softmax(
                     act_scores[:, 1:]) * np.exp(comp_scores)

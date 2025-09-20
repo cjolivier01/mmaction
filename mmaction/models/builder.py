@@ -1,4 +1,4 @@
-import mmcv
+from mmengine.utils import is_str
 from torch import nn
 
 from .registry import (BACKBONES, FLOWNETS, SPATIAL_TEMPORAL_MODULES,
@@ -12,7 +12,7 @@ def _build_module(cfg, registry, default_args):
     assert isinstance(default_args, dict) or default_args is None
     args = cfg.copy()
     obj_type = args.pop('type')
-    if mmcv.is_str(obj_type):
+    if is_str(obj_type):
         if obj_type not in registry.module_dict:
             raise KeyError('{} is not in the {} registry'.format(
                 obj_type, registry.name))

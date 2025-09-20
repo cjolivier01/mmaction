@@ -4,13 +4,15 @@ import numpy as np
 import pandas as pd
 import torch
 
-import mmcv
+from mmengine.config import Config
+from mmengine.fileio import dump
+from mmengine.utils import ProgressBar
 from mmcv.runner import load_checkpoint, parallel_test, obj_from_dict
 from mmcv.parallel import scatter, collate, MMDataParallel
 
 from mmaction import datasets
 from mmaction.datasets import build_dataloader
-from mmaction.models import build_localizer, localizers
+from mmaction.models.builder import build_localizer
 from mmaction.models.tenons.segmental_consensuses import parse_stage_config
 from mmaction.core.evaluation.localize_utils import (results2det,
                                                      perform_regression,
@@ -23,7 +25,7 @@ def single_test(model, data_loader):
     model.eval()
     results = []
     dataset = data_loader.dataset
-    prog_bar = mmcv.ProgressBar(len(dataset))
+    prog_bar = ProgressBar(len(dataset))
     for data in data_loader:
         with torch.no_grad():
             result = model(return_loss=False, **data)
@@ -65,7 +67,7 @@ def main():
     if args.out is not None and not args.out.endswith(('.pkl', '.pickle')):
         raise ValueError('The output file must be a pkl file.')
 
-    cfg = mmcv.Config.fromfile(args.config)
+    cfg = Config.fromfile(args.config)
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
         torch.backends.cudnn.benchmark = True
@@ -90,12 +92,11 @@ def main():
         stpp_cfg=cfg.model.segmental_consensus.stpp_cfg)
 
     dataset = obj_from_dict(cfg.data.test, datasets, dict(test_mode=True))
+    # Use distributed testing to avoid legacy parallel_test path
     if args.gpus == 1:
-        model = build_localizer(
-            cfg.model, train_cfg=None, test_cfg=cfg.test_cfg)
+        model = build_localizer(cfg.model, train_cfg=None, test_cfg=cfg.test_cfg)
         load_checkpoint(model, args.checkpoint, strict=True)
         model = MMDataParallel(model, device_ids=[0])
-
         data_loader = build_dataloader(
             dataset,
             imgs_per_gpu=1,
@@ -105,21 +106,31 @@ def main():
             shuffle=False)
         outputs = single_test(model, data_loader)
     else:
-        model_args = cfg.model.copy()
-        model_args.update(train_cfg=None, test_cfg=cfg.test_cfg)
-        model_type = getattr(localizers, model_args.pop('type'))
-        outputs = parallel_test(
-            model_type,
-            model_args,
-            args.checkpoint,
+        # Distributed path similar to other test scripts
+        from mmaction.apis import init_dist
+        from mmcv.runner import get_dist_info
+        import torch
+        init_dist('pytorch', **cfg.dist_params)
+        model = build_localizer(cfg.model, train_cfg=None, test_cfg=cfg.test_cfg)
+        data_loader = build_dataloader(
             dataset,
-            _data_func,
-            range(args.gpus),
-            workers_per_gpu=args.proc_per_gpu)
+            imgs_per_gpu=1,
+            workers_per_gpu=cfg.data.workers_per_gpu,
+            dist=True,
+            shuffle=False)
+        load_checkpoint(model, args.checkpoint, strict=True)
+        from mmcv.parallel.distributed import MMDistributedDataParallel
+        find_unused_parameters = cfg.get('find_unused_parameters', False)
+        model = MMDistributedDataParallel(
+            model.cuda(),
+            device_ids=[torch.cuda.current_device()],
+            broadcast_buffers=False,
+            find_unused_parameters=find_unused_parameters)
+        outputs = single_test(model, data_loader)
 
     if args.out:
         print('writing results to {}'.format(args.out))
-        mmcv.dump(outputs, args.out)
+        dump(outputs, args.out)
 
     eval_type = args.eval
     if eval_type:

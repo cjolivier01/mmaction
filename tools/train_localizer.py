@@ -1,13 +1,13 @@
 from __future__ import division
 
 import argparse
-from mmcv import Config
+from mmengine.config import Config
 
-from mmaction import __version__
+from mmaction.mmaction import __version__
 from mmaction.datasets import get_trimmed_dataset
 from mmaction.apis import (train_network, init_dist, get_root_logger,
                            set_random_seed)
-from mmaction.models import build_localizer
+from mmaction.models.builder import build_localizer
 import torch
 
 
