@@ -1,5 +1,6 @@
 #include <ATen/ATen.h>
-#include <THC/THCAtomics.cuh>
+#include <ATen/cuda/CUDAContext.h>
+#include <ATen/native/cuda/KernelUtils.cuh>
 
 #define CUDA_1D_KERNEL_LOOP(i, n)                            \
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; \
@@ -84,21 +85,21 @@ int ROIPoolForwardLaucher(const at::Tensor features, const at::Tensor rois,
                           const int pooled_h, const int pooled_w,
                           at::Tensor output, at::Tensor argmax) {
   const int output_size = num_rois * channels * pooled_h * pooled_w;
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf, at::kBFloat16, features.scalar_type(),
+      "ROIPoolLaucherForward",
+      ([&] {
+        const scalar_t *bottom_data = features.data_ptr<scalar_t>();
+        const scalar_t *rois_data = rois.data_ptr<scalar_t>();
+        scalar_t *top_data = output.data_ptr<scalar_t>();
+        int *argmax_data = argmax.data_ptr<int>();
 
-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      features.type(), "ROIPoolLaucherForward", ([&] {
-        const scalar_t *bottom_data = features.data<scalar_t>();
-        const scalar_t *rois_data = rois.data<scalar_t>();
-        scalar_t *top_data = output.data<scalar_t>();
-        int *argmax_data = argmax.data<int>();
-
-        ROIPoolForward<scalar_t>
-            <<<GET_BLOCKS(output_size), THREADS_PER_BLOCK>>>(
-                output_size, bottom_data, rois_data, scalar_t(spatial_scale),
-                channels, height, width, pooled_h, pooled_w, top_data,
-                argmax_data);
+        ROIPoolForward<scalar_t><<<GET_BLOCKS(output_size), THREADS_PER_BLOCK>>>(
+            output_size, bottom_data, rois_data, scalar_t(spatial_scale),
+            channels, height, width, pooled_h, pooled_w, top_data,
+            argmax_data);
       }));
-  THCudaCheck(cudaGetLastError());
+  AT_CUDA_CHECK(cudaGetLastError());
   return 1;
 }
 
@@ -119,9 +120,12 @@ __global__ void ROIPoolBackward(const int nthreads, const scalar_t *top_diff,
     int bottom_index = argmax_data[(n * channels + c) * pooled_h * pooled_w +
                                    ph * pooled_w + pw];
 
-    atomicAdd(bottom_diff + (roi_batch_ind * channels + c) * height * width +
-                  bottom_index,
-              top_diff[index]);
+    at::native::fastAtomicAdd(
+        bottom_diff + (roi_batch_ind * channels + c) * height * width,
+        bottom_index,
+        height * width,
+        top_diff[index],
+        true);
   }
 }
 
@@ -132,25 +136,20 @@ int ROIPoolBackwardLaucher(const at::Tensor top_grad, const at::Tensor rois,
                            const int num_rois, const int pooled_h,
                            const int pooled_w, at::Tensor bottom_grad) {
   const int output_size = num_rois * pooled_h * pooled_w * channels;
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf, at::kBFloat16, top_grad.scalar_type(),
+      "ROIPoolLaucherBackward",
+      ([&] {
+        const scalar_t *top_diff = top_grad.data_ptr<scalar_t>();
+        const scalar_t *rois_data = rois.data_ptr<scalar_t>();
+        const int *argmax_data = argmax.data_ptr<int>();
+        scalar_t *bottom_diff = bottom_grad.data_ptr<scalar_t>();
 
-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      top_grad.type(), "ROIPoolLaucherBackward", ([&] {
-        const scalar_t *top_diff = top_grad.data<scalar_t>();
-        const scalar_t *rois_data = rois.data<scalar_t>();
-        const int *argmax_data = argmax.data<int>();
-        scalar_t *bottom_diff = bottom_grad.data<scalar_t>();
-
-        if (sizeof(scalar_t) == sizeof(double)) {
-          fprintf(stderr, "double is not supported\n");
-          exit(-1);
-        }
-
-        ROIPoolBackward<scalar_t>
-            <<<GET_BLOCKS(output_size), THREADS_PER_BLOCK>>>(
-                output_size, top_diff, rois_data, argmax_data,
-                scalar_t(spatial_scale), channels, height, width, pooled_h,
-                pooled_w, bottom_diff);
+        ROIPoolBackward<scalar_t><<<GET_BLOCKS(output_size), THREADS_PER_BLOCK>>>(
+            output_size, top_diff, rois_data, argmax_data,
+            scalar_t(spatial_scale), channels, height, width, pooled_h,
+            pooled_w, bottom_diff);
       }));
-  THCudaCheck(cudaGetLastError());
+  AT_CUDA_CHECK(cudaGetLastError());
   return 1;
 }

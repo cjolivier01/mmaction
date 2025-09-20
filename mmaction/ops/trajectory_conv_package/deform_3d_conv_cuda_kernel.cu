@@ -1,5 +1,7 @@
 #include <ATen/ATen.h>
-#include <THC/THCAtomics.cuh>
+#include <ATen/cuda/CUDAContext.h>
+#include <ATen/native/cuda/KernelUtils.cuh>
+#include <ATen/cuda/Atomic.cuh>
 
 
 using namespace at;
@@ -241,18 +243,20 @@ void deformable_im2col(const at::Tensor data_im, const at::Tensor data_offset,
   int num_kernels = channels * time_col * height_col * width_col * parallel_imgs;
   int channel_per_deformable_group = channels / deformable_group;
 
-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-    data_im.type(), "deformable_im2col_kernel", ([&] {
-      const scalar_t *_data_im = data_im.data<scalar_t>();
-      const scalar_t *_data_offset = data_offset.data<scalar_t>();
-      scalar_t * _data_col = data_col.data<scalar_t>();
-      deformable_im2col_gpu_kernel<scalar_t><<<GET_BLOCKS(num_kernels),
-                                 CUDA_NUM_THREADS>>>(
-          num_kernels, _data_im, _data_offset, time, height, width, kernel_t, kernel_h, kernel_w,
-          pad_t, pad_h, pad_w, stride_t, stride_h, stride_w, dilation_t, dilation_h, dilation_w,
-          channel_per_deformable_group, parallel_imgs, channels, deformable_group,
-          time_col, height_col, width_col, _data_col);
-    }));
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf, at::kBFloat16, data_im.scalar_type(),
+      "deformable_im2col_kernel",
+      ([&] {
+        const scalar_t *_data_im = data_im.data_ptr<scalar_t>();
+        const scalar_t *_data_offset = data_offset.data_ptr<scalar_t>();
+        scalar_t * _data_col = data_col.data_ptr<scalar_t>();
+        deformable_im2col_gpu_kernel<scalar_t><<<GET_BLOCKS(num_kernels),
+                                   CUDA_NUM_THREADS>>>(
+            num_kernels, _data_im, _data_offset, time, height, width, kernel_t, kernel_h, kernel_w,
+            pad_t, pad_h, pad_w, stride_t, stride_h, stride_w, dilation_t, dilation_h, dilation_w,
+            channel_per_deformable_group, parallel_imgs, channels, deformable_group,
+            time_col, height_col, width_col, _data_col);
+      }));
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     printf("error in deformable_im2col: %s\n", cudaGetErrorString(err));
@@ -316,7 +320,8 @@ __global__ void deformable_col2im_gpu_kernel(const int n, const scalar_t* data_c
              int cur_bottom_grad_pos = ( ( (b * channels + c) * time + cur_t + dt ) * height + cur_h + dy ) * width + cur_w + dx;
              scalar_t weight = get_gradient_weight(cur_inv_t_data, cur_inv_h_data, cur_inv_w_data,
                                                 cur_t + dt, cur_h + dy, cur_w + dx, time, height, width);
-             atomicAdd(data_im + cur_bottom_grad_pos, weight * cur_top_grad);
+             gpuAtomicAddNoReturn(
+                 data_im + cur_bottom_grad_pos, weight * cur_top_grad);
            }
         }
       }
@@ -341,17 +346,20 @@ void deformable_col2im(
   int num_kernels = channels * kernel_t * kernel_h * kernel_w * time_col * height_col * width_col * parallel_imgs;
   int channel_per_deformable_group = channels / deformable_group;
 
-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(data_col.type(), "deformable_col2im_kernel", ([&] {
-    const scalar_t *_data_col = data_col.data<scalar_t>();
-    const scalar_t *_data_offset = data_offset.data<scalar_t>();
-    scalar_t *_data_im = data_im.data<scalar_t>();
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf, at::kBFloat16, data_col.scalar_type(),
+      "deformable_col2im_kernel",
+      ([&] {
+        const scalar_t *_data_col = data_col.data_ptr<scalar_t>();
+        const scalar_t *_data_offset = data_offset.data_ptr<scalar_t>();
+        scalar_t *_data_im = data_im.data_ptr<scalar_t>();
 
-    deformable_col2im_gpu_kernel<scalar_t><<<GET_BLOCKS(num_kernels),
-                               CUDA_NUM_THREADS>>>(
-        num_kernels, _data_col, _data_offset, channels, time, height, width, kernel_t, kernel_h, kernel_w,
-        pad_t, pad_h, pad_w, stride_t, stride_h, stride_w, dilation_t, dilation_h, dilation_w,
-        channel_per_deformable_group, parallel_imgs, deformable_group, time_col, height_col, width_col, _data_im);
-  }));
+        deformable_col2im_gpu_kernel<scalar_t><<<GET_BLOCKS(num_kernels),
+                                 CUDA_NUM_THREADS>>>(
+            num_kernels, _data_col, _data_offset, channels, time, height, width, kernel_t, kernel_h, kernel_w,
+            pad_t, pad_h, pad_w, stride_t, stride_h, stride_w, dilation_t, dilation_h, dilation_w,
+            channel_per_deformable_group, parallel_imgs, deformable_group, time_col, height_col, width_col, _data_im);
+      }));
 
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
@@ -444,24 +452,26 @@ void deformable_col2im_coord(
   int num_kernels = time_col * height_col * width_col * 2 * kernel_t * kernel_h * kernel_w * deformable_group;
   int channel_per_deformable_group = channels * kernel_t * kernel_h * kernel_w / deformable_group;
 
-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(data_col.type(), "deformable_col2im_coord_kernel", ([&] {
-    const scalar_t *_data_col = data_col.data<scalar_t>();
-    const scalar_t *_data_im = data_im.data<scalar_t>();
-    const scalar_t *_data_offset = data_offset.data<scalar_t>();
-    scalar_t *_grad_offset = grad_offset.data<scalar_t>();
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf, at::kBFloat16, data_col.scalar_type(),
+      "deformable_col2im_coord_kernel",
+      ([&] {
+        const scalar_t *_data_col = data_col.data_ptr<scalar_t>();
+        const scalar_t *_data_im = data_im.data_ptr<scalar_t>();
+        const scalar_t *_data_offset = data_offset.data_ptr<scalar_t>();
+        scalar_t *_grad_offset = grad_offset.data_ptr<scalar_t>();
 
-    deformable_col2im_coord_gpu_kernel<scalar_t><<<GET_BLOCKS(num_kernels),
-                               CUDA_NUM_THREADS>>>(
-        num_kernels, _data_col, _data_im, _data_offset, channels, time, height, width,
-        kernel_t, kernel_h, kernel_w, pad_t, pad_h, pad_w,
-        stride_t, stride_h, stride_w, dilation_t, dilation_h, dilation_w,
-        channel_per_deformable_group, parallel_imgs, 2 * kernel_t * kernel_h * kernel_w * deformable_group,
-        deformable_group, time_col, height_col, width_col, _grad_offset);
-  }));
+        deformable_col2im_coord_gpu_kernel<scalar_t><<<GET_BLOCKS(num_kernels),
+                                 CUDA_NUM_THREADS>>>(
+            num_kernels, _data_col, _data_im, _data_offset, channels, time, height, width,
+            kernel_t, kernel_h, kernel_w, pad_t, pad_h, pad_w,
+            stride_t, stride_h, stride_w, dilation_t, dilation_h, dilation_w,
+            channel_per_deformable_group, parallel_imgs, 2 * kernel_t * kernel_h * kernel_w * deformable_group,
+            deformable_group, time_col, height_col, width_col, _grad_offset);
+      }));
 
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     printf("error in deformable_col2im_coord: %s\n", cudaGetErrorString(err));
   }
 }
-

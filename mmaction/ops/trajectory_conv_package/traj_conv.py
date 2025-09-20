@@ -41,11 +41,12 @@ class TrajConvFunction(Function):
         if not input.is_cuda:
             raise NotImplementedError
         else:
+            # Support float32/float64/float16/bfloat16 on CUDA
             if isinstance(input, torch.autograd.Variable):
-                if not (isinstance(input.data, torch.cuda.FloatTensor) or isinstance(input.data, torch.cuda.DoubleTensor)):
+                if not input.is_cuda:
                     raise NotImplementedError
             else:
-                if not (isinstance(input, torch.cuda.FloatTensor) or isinstance(input, torch.cuda.DoubleTensor)):
+                if not input.is_cuda:
                     raise NotImplementedError
 
             cur_im2col_step = min(ctx.im2col_step, input.shape[0])
@@ -68,11 +69,12 @@ class TrajConvFunction(Function):
         if not grad_output.is_cuda:
             raise NotImplementedError
         else:
+            # Support float32/float64/float16/bfloat16 on CUDA
             if isinstance(grad_output, torch.autograd.Variable):
-                if not (isinstance(grad_output.data, torch.cuda.FloatTensor) or isinstance(grad_output.data, torch.cuda.DoubleTensor)):
+                if not grad_output.is_cuda:
                     raise NotImplementedError
             else:
-                if not (isinstance(grad_output, torch.cuda.FloatTensor) or isinstance(grad_output, torch.cuda.DoubleTensor)):
+                if not grad_output.is_cuda:
                     raise NotImplementedError
 
             cur_im2col_step = min(ctx.im2col_step, input.shape[0])
@@ -88,7 +90,7 @@ class TrajConvFunction(Function):
                 # print("grad_input.size: ", grad_input.size())
                 # print("grad_offset.size: ", grad_offset.size())
                 traj_conv_cuda.deform_3d_conv_backward_input_cuda(
-                    input, offset, grad_output, grad_input,
+                    input, offset, grad_output.contiguous(), grad_input,
                     grad_offset, weight, bias, ctx.bufs_[0],
                     weight.size(2), weight.size(3), weight.size(4),
                     ctx.stride[0], ctx.stride[1], ctx.stride[2],
@@ -100,7 +102,7 @@ class TrajConvFunction(Function):
                 grad_weight = torch.zeros_like(weight)
                 grad_bias = torch.zeros_like(bias)
                 traj_conv_cuda.deform_3d_conv_backward_parameters_cuda(
-                    input, offset, grad_output,
+                    input, offset, grad_output.contiguous(),
                     grad_weight, grad_bias, ctx.bufs_[0], ctx.bufs_[1], 
                     weight.size(2), weight.size(3), weight.size(4),
                     ctx.stride[0], ctx.stride[1], ctx.stride[2],

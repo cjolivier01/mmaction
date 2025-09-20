@@ -146,15 +146,15 @@ int deform_3d_conv_forward_cuda(at::Tensor &input, at::Tensor &weight, at::Tenso
   TORCH_CHECK(offset.size(0) == batchSize, "Invalid batch size of offset");
 
   output = output.view({batchSize / im2col_step, im2col_step, nOutputPlane, outputTime, outputHeight, outputWidth});
-  columns = at::zeros({nInputPlane * kT * kH * kW, im2col_step * outputTime * outputHeight * outputWidth}, input.type());
+  columns = at::zeros({nInputPlane * kT * kH * kW, im2col_step * outputTime * outputHeight * outputWidth}, input.options());
 
-  ones = at::ones({outputTime, outputHeight, outputWidth}, input.type());
+  ones = at::ones({outputTime, outputHeight, outputWidth}, input.options());
 
   input = input.view({batchSize / im2col_step, im2col_step, nInputPlane, inputTime, inputHeight, inputWidth});
   offset = offset.view({batchSize / im2col_step, im2col_step, deformable_group * 2 * kT * kH * kW, outputTime, outputHeight, outputWidth});
   
 
-  auto output_buffer = at::zeros({batchSize / im2col_step, nOutputPlane, im2col_step, outputTime, outputHeight, outputWidth}, output.type());
+  auto output_buffer = at::zeros({batchSize / im2col_step, nOutputPlane, im2col_step, outputTime, outputHeight, outputWidth}, output.options());
 
   for (int elt = 0; elt < batchSize / im2col_step; elt++) {
     auto input_n = input.select(0, elt);
@@ -242,7 +242,7 @@ int deform_3d_conv_backward_input_cuda(at::Tensor &input, at::Tensor &offset,
 
 
   gradInput = gradInput.view({batchSize, nInputPlane, inputTime, inputHeight, inputWidth});
-  columns = at::zeros({nInputPlane * kT * kH * kW, im2col_step * outputTime * outputHeight * outputWidth}, input.type());
+  columns = at::zeros({nInputPlane * kT * kH * kW, im2col_step * outputTime * outputHeight * outputWidth}, input.options());
 
   // change order of grad output
   gradOutput = gradOutput.view({batchSize / im2col_step, im2col_step, nOutputPlane, outputTime, outputHeight, outputWidth});
@@ -348,8 +348,8 @@ int deform_3d_conv_backward_parameters_cuda(at::Tensor input, at::Tensor offset,
 
   TORCH_CHECK((offset.size(0) == batchSize), "invalid batch size of offset");
 
-  columns = at::zeros({nInputPlane * kT * kH * kW, im2col_step * outputTime * outputHeight * outputWidth}, input.type());
-  ones = at::ones({im2col_step, outputTime, outputHeight, outputWidth}, input.type());
+  columns = at::zeros({nInputPlane * kT * kH * kW, im2col_step * outputTime * outputHeight * outputWidth}, input.options());
+  ones = at::ones({im2col_step, outputTime, outputHeight, outputWidth}, input.options());
   
   // change order of grad output
   gradOutput = gradOutput.view({batchSize / im2col_step, im2col_step, nOutputPlane, outputTime, outputHeight * outputWidth});
